@@ -1,1 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wildlife Migration Tracker</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #000010;
+            color: #ffffff;
+            overflow: hidden;
+        }
 
+        #globeViz {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        .overlay-content {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            background-color: rgba(20, 20, 40, 0.85);
+            padding: 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 350px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 { margin: 0 0 15px 0; font-size: 1.8rem; }
+        
+        label { display: block; margin: 15px 0 8px 0; font-weight: bold; }
+
+        #species-select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            background-color: #333;
+            color: #fff;
+            font-size: 1rem;
+        }
+        
+        #route-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+        }
+
+        #route-nav button {
+            background-color: #444;
+            border: 1px solid #666;
+            color: #fff;
+            font-size: 1.2rem;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        #route-nav button:hover { background-color: #555; }
+        #route-nav-info { font-size: 0.9rem; text-align: center; flex-grow: 1; }
+
+        #info-panel { margin-top: 20px; max-height: 45vh; overflow-y: auto; }
+        #info-panel p { margin: 8px 0; line-height: 1.5; }
+        #info-panel strong { color: #64b5f6; }
+        #info-panel .species-info { font-style: italic; color: #ccc; margin-bottom: 15px;}
+        #info-panel .route-title { font-size: 1.1rem; color: #a6d8ff; margin-bottom: 10px; border-bottom: 1px solid #444; padding-bottom: 5px;}
+        #status-message { color: #ffc107; font-style: italic; margin-top: 10px; }
+    </style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/globe.gl"></script>
+</head>
+<body>
+
+    <div id="globeViz"></div>
+    
+    <div class="overlay-content">
+        <h1>Wildlife Migration Tracker 🐾</h1>
+        
+        <label for="species-select">Select a Species:</label>
+        <select id="species-select">
+            <option value="">Loading migrations...</option>
+        </select>
+
+        <div id="route-nav" style="display: none;">
+            <button id="prev-route-btn">&lt;</button>
+            <div id="route-nav-info"></div>
+            <button id="next-route-btn">&gt;</button>
+        </div>
+        
+        <div id="info-panel" style="display: none;"></div>
+         <p id="status-message"></p>
+    </div>
+
+    <script>
+        const speciesSelect = document.getElementById('species-select');
+        const infoPanel = document.getElementById('info-panel');
+        const statusMessage = document.getElementById('status-message');
+        const routeNav = document.getElementById('route-nav');
+        const routeNavInfo = document.getElementById('route-nav-info');
+        const prevRouteBtn = document.getElementById('prev-route-btn');
+        const nextRouteBtn = document.getElementById('next-route-btn');
+
+        let globe;
+        let selectedSpeciesData = null;
+        let currentRouteIndex = 0;
+        
+        const GEO_JSON_URL = 'https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson';
+
+        const migrationData = [
+        
+    {
+        species: "Humpback Whale",
+        info: "Migrates from cold feeding grounds to warm breeding grounds.",
+        routes: [
+            { name: "North Pacific", startLat: 60.0, startLng: -150.0, endLat: 21.0, endLng: -157.0, timing: "Feeds in Alaska (Summer), breeds in Hawaii (Winter)." },
+            { name: "North Atlantic", startLat: 65.0, startLng: -30.0, endLat: 18.0, endLng: -68.0, timing: "Feeds near Greenland (Summer), breeds in Caribbean (Winter)." }
+        ]
+    },
+    {
+        species: "Monarch Butterfly",
+        info: "Migrates from North America to overwintering sites in Mexico.",
+        routes: [
+            { name: "Eastern North America", startLat: 45.0, startLng: -75.0, endLat: 19.4, endLng: -99.1, timing: "Leaves Canada/USA (Aug-Oct), overwinters in Mexico (Nov-Mar)." }
+        ]
+    },
+    {
+        species: "Arctic Tern",
+        info: "Longest migration, from Arctic to Antarctic.",
+        routes: [
+            { name: "Global Migration", startLat: 80.0, startLng: -10.0, endLat: -75.0, endLng: 0.0, timing: "Breeds in Arctic (Jun-Aug), winters in Antarctica (Dec-Feb)." }
+        ]
+    },
+    {
+        species: "Caribou (Barren-ground)",
+        info: "Migrates across tundra for feeding and calving.",
+        routes: [
+            { name: "Western Arctic Herd", startLat: 68.0, startLng: -150.0, endLat: 66.5, endLng: -145.0, timing: "Calving in Arctic Refuge (Jun), winters south (Oct-Apr)." }
+        ]
+    },
+    {
+        species: "Atlantic Bluefin Tuna",
+        info: "Migrates across oceans for feeding and spawning.",
+        routes: [
+            { name: "Western Atlantic", startLat: 42.0, startLng: -65.0, endLat: 25.0, endLng: -85.0, timing: "Spawns in Gulf of Mexico (Apr-Jun), feeds off Nova Scotia (Summer)." }
+        ]
+    },
+    {
+        species: "Bar-tailed Godwit",
+        info: "Non-stop flights across the Pacific.",
+        routes: [
+            { name: "Pacific Migration", startLat: 64.0, startLng: -165.0, endLat: -40.0, endLng: 175.0, timing: "Breeds in Alaska (Jun-Jul), winters in New Zealand (Sep-Mar)." }
+        ]
+    },
+    {
+        species: "Gray Whale",
+        info: "Migrates along Pacific coast between feeding and breeding grounds.",
+        routes: [
+            { name: "Eastern Pacific", startLat: 71.0, startLng: -156.0, endLat: 24.0, endLng: -112.0, timing: "Feeds in Bering Sea (Summer), breeds in Baja California (Winter)." }
+        ]
+    },
+    {
+        species: "Wildebeest",
+        info: "Circular migration following seasonal rains.",
+        routes: [
+            { name: "Serengeti Migration", startLat: -1.5, startLng: 34.0, endLat: -3.5, endLng: 36.0, timing: "Calving in Serengeti (Jan-Mar), migrates to Maasai Mara (Jul-Oct)." }
+        ]
+    },
+    {
+        species: "Red Knot",
+        info: "Long-distance shorebird migration.",
+        routes: [
+            { name: "Western Atlantic", startLat: 74.0, startLng: -80.0, endLat: -54.0, endLng: -70.0, timing: "Breeds in Arctic Canada (Jun-Jul), winters in Tierra del Fuego (Nov-Mar)." }
+        ]
+    },
+    {
+        species: "Leatherback Sea Turtle",
+        info: "Migrates across oceans to nesting beaches.",
+        routes: [
+            { name: "Pacific Migration", startLat: 40.0, startLng: -125.0, endLat: -2.0, endLng: 137.0, timing: "Forages off California (Summer), nests in Papua New Guinea (Nov-Feb)." }
+        ]
+    },
+    {
+        species: "Salmon (Chinook)",
+        info: "Migrates from ocean to freshwater rivers for spawning.",
+        routes: [
+            { name: "Pacific Northwest", startLat: 48.0, startLng: -125.0, endLat: 44.5, endLng: -121.0, timing: "Ocean feeding (Year-round), spawns in Columbia River (Sep-Nov)." }
+        ]
+    },
+    {
+        species: "Greater Shearwater",
+        info: "Trans-equatorial migration between breeding and feeding grounds.",
+        routes: [
+            { name: "Atlantic Migration", startLat: -37.0, startLng: -12.0, endLat: 50.0, endLng: -50.0, timing: "Breeds in Tristan da Cunha (Nov-Mar), feeds off Newfoundland (Jun-Aug)." }
+        ]
+    },
+    {
+        species: "Pronghorn Antelope",
+        info: "Migrates seasonally for food and breeding.",
+        routes: [
+            { name: "Wyoming Migration", startLat: 43.0, startLng: -110.0, endLat: 41.0, endLng: -109.0, timing: "Summers in Grand Teton (Jun-Aug), winters in Green River Basin (Oct-Apr)." }
+        ]
+    },
+    {
+        species: "European Eel",
+        info: "Migrates from freshwater to ocean for spawning.",
+        routes: [
+            { name: "Atlantic Migration", startLat: 52.0, startLng: 0.0, endLat: 25.0, endLng: -60.0, timing: "Leaves European rivers (Fall), spawns in Sargasso Sea (Winter)." }
+        ]
+    },
+    {
+        species: "Swainson’s Hawk",
+        info: "Migrates from North to South America.",
+        routes: [
+            { name: "Western Americas", startLat: 50.0, startLng: -110.0, endLat: -35.0, endLng: -65.0, timing: "Breeds in Canada/USA (May-Aug), winters in Argentina (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Sooty Shearwater",
+        info: "Circumpolar migration across oceans.",
+        routes: [
+            { name: "Pacific Migration", startLat: -48.0, startLng: 170.0, endLat: 50.0, startLng: -130.0, timing: "Breeds in New Zealand (Nov-Mar), feeds off California (May-Sep)." }
+        ]
+    },
+    {
+        species: "African Elephant (some populations)",
+        info: "Seasonal migrations for water and food.",
+        routes: [
+            { name: "Botswana Migration", startLat: -18.0, startLng: 24.0, endLat: -16.0, endLng: 22.0, timing: "Chobe River (Dry season, May-Oct), Okavango Delta (Wet season, Nov-Apr)." }
+        ]
+    },
+    {
+        species: "Sandhill Crane",
+        info: "Migrates between breeding and wintering grounds.",
+        routes: [
+            { name: "Central Flyway", startLat: 65.0, startLng: -150.0, endLat: 31.0, endLng: -106.0, timing: "Breeds in Alaska/Canada (May-Aug), winters in Texas/Mexico (Nov-Mar)." }
+        ]
+    },
+    {
+        species: "Humpback Dolphin",
+        info: "Coastal migrations for feeding and breeding.",
+        routes: [
+            { name: "Indian Ocean", startLat: -34.0, startLng: 18.0, endLat: -22.0, endLng: 35.0, timing: "Cape Town (Summer, Dec-Feb), Mozambique (Winter, Jun-Aug)." }
+        ]
+    },
+    {
+        species: "White Stork",
+        info: "Migrates between Europe and Africa.",
+        routes: [
+            { name: "Western Route", startLat: 50.0, startLng: 8.0, endLat: -25.0, endLng: 20.0, timing: "Breeds in Germany (Apr-Aug), winters in South Africa (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Green Sea Turtle",
+        info: "Migrates to nesting beaches.",
+        routes: [
+            { name: "Caribbean Migration", startLat: 13.0, startLng: -59.0, endLat: 10.0, endLng: -83.0, timing: "Forages in Barbados (Year-round), nests in Costa Rica (Jun-Oct)." }
+        ]
+    },
+    {
+        species: "Rufous Hummingbird",
+        info: "Long-distance migration for a small bird.",
+        routes: [
+            { name: "Pacific Coast", startLat: 60.0, startLng: -135.0, endLat: 19.0, endLng: -99.0, timing: "Breeds in Alaska/Canada (May-Jul), winters in Mexico (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Pacific Walrus",
+        info: "Migrates for feeding and breeding.",
+        routes: [
+            { name: "Bering Sea", startLat: 70.0, startLng: -170.0, endLat: 62.0, endLng: -165.0, timing: "Breeds in Bering Sea (Winter, Dec-Mar), feeds in Chukchi Sea (Summer, Jun-Sep)." }
+        ]
+    },
+    {
+        species: "Straw-colored Fruit Bat",
+        info: "Migrates for fruit availability.",
+        routes: [
+            { name: "Central Africa", startLat: -6.0, startLng: 23.0, endLat: 7.0, endLng: 21.0, timing: "Kasanka, Zambia (Nov-Dec), disperses to Congo Basin (Jan-Oct)." }
+        ]
+    },
+    {
+        species: "Blackpoll Warbler",
+        info: "Long-distance forest bird migration.",
+        routes: [
+            { name: "Trans-Atlantic", startLat: 65.0, startLng: -80.0, endLat: 5.0, endLng: -60.0, timing: "Breeds in Canada (Jun-Jul), winters in Amazon (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Bowhead Whale",
+        info: "Migrates within Arctic waters.",
+        routes: [
+            { name: "Bering-Chukchi-Beaufort", startLat: 65.0, startLng: -170.0, endLat: 73.0, endLng: -140.0, timing: "Winters in Bering Sea (Dec-Mar), summers in Beaufort Sea (Jun-Sep)." }
+        ]
+    },
+    {
+        species: "Barn Swallow",
+        info: "Long-distance migration across continents.",
+        routes: [
+            { name: "Europe-Africa", startLat: 55.0, startLng: 0.0, endLat: -10.0, endLng: 25.0, timing: "Breeds in Europe (May-Aug), winters in Central Africa (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Spiny Lobster",
+        info: "Mass migrations for breeding and feeding.",
+        routes: [
+            { name: "Caribbean Migration", startLat: 24.0, startLng: -78.0, endLat: 20.0, endLng: -74.0, timing: "Bahamas (Summer, Jun-Aug), migrates to Cuba (Winter, Nov-Feb)." }
+        ]
+    },
+    {
+        species: "Saiga Antelope",
+        info: "Migrates across steppes for grazing and calving.",
+        routes: [
+            { name: "Kazakhstan Migration", startLat: 50.0, startLng: 60.0, endLat: 46.0, endLng: 65.0, timing: "Calving in northern steppes (May-Jun), winters south (Nov-Mar)." }
+        ]
+    },
+    {
+        species: "Manx Shearwater",
+        info: "Trans-equatorial migration.",
+        routes: [
+            { name: "Atlantic Migration", startLat: 53.0, startLng: -5.0, endLat: -35.0, endLng: -50.0, timing: "Breeds in UK (Apr-Aug), winters off Brazil (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Horseshoe Crab",
+        info: "Coastal migration for spawning.",
+        routes: [
+            { name: "Delaware Bay", startLat: 39.0, startLng: -75.0, endLat: 38.8, endLng: -75.1, timing: "Forages offshore (Year-round), spawns on Delaware beaches (May-Jun)." }
+        ]
+    },
+    {
+        species: "Osprey",
+        info: "Migrates between breeding and wintering grounds.",
+        routes: [
+            { name: "North-South America", startLat: 45.0, startLng: -70.0, endLat: -15.0, endLng: -55.0, timing: "Breeds in USA/Canada (Apr-Aug), winters in South America (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Narwhal",
+        info: "Migrates within Arctic for feeding and calving.",
+        routes: [
+            { name: "Baffin Bay", startLat: 75.0, startLng: -80.0, endLat: 65.0, startLng: -60.0, timing: "Summers in Baffin Bay (Jun-Aug), winters in Davis Strait (Nov-Mar)." }
+        ]
+    },
+    {
+        species: "American Eel",
+        info: "Migrates from freshwater to ocean for spawning.",
+        routes: [
+            { name: "Atlantic Migration", startLat: 40.0, startLng: -75.0, endLat: 25.0, endLng: -60.0, timing: "Leaves North American rivers (Fall), spawns in Sargasso Sea (Winter)." }
+        ]
+    },
+    {
+        species: "Peregrine Falcon",
+        info: "Long-distance migration for breeding and wintering.",
+        routes: [
+            { name: "Arctic-South America", startLat: 70.0, startLng: -90.0, endLat: -30.0, endLng: -70.0, timing: "Breeds in Arctic (May-Aug), winters in Chile/Argentina (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Dall’s Porpoise",
+        info: "Seasonal coastal migrations.",
+        routes: [
+            { name: "North Pacific", startLat: 55.0, startLng: -160.0, endLat: 35.0, endLng: -125.0, timing: "Alaska (Summer, Jun-Sep), California (Winter, Dec-Mar)." }
+        ]
+    },
+    {
+        species: "Common Crane",
+        info: "Migrates between Europe and Africa.",
+        routes: [
+            { name: "Europe-Africa", startLat: 60.0, startLng: 20.0, endLat: 8.0, endLng: 38.0, timing: "Breeds in Scandinavia (May-Aug), winters in Ethiopia (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Atlantic Mackerel",
+        info: "Migrates for feeding and spawning.",
+        routes: [
+            { name: "North Atlantic", startLat: 60.0, startLng: -5.0, endLat: 40.0, endLng: -20.0, timing: "Spawns off Europe (Spring, Mar-May), feeds in North Sea (Summer, Jun-Aug)." }
+        ]
+    },
+    {
+        species: "Red Deer (some populations)",
+        info: "Seasonal migrations for grazing.",
+        routes: [
+            { name: "Scottish Highlands", startLat: 57.0, startLng: -5.0, endLat: 56.0, endLng: -4.5, timing: "Highlands (Summer, Jun-Sep), lowlands (Winter, Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Wilson’s Storm Petrel",
+        info: "Trans-equatorial migration.",
+        routes: [
+            { name: "Atlantic Migration", startLat: -60.0, startLng: 0.0, endLat: 50.0, endLng: -30.0, timing: "Breeds in Antarctica (Dec-Mar), feeds in North Atlantic (Jun-Sep)." }
+        ]
+    },
+    {
+        species: "Blue Whale",
+        info: "Migrates between high-latitude feeding grounds and tropical breeding areas.",
+        routes: [
+            { name: "Eastern Pacific", startLat: 60.0, startLng: -140.0, endLat: 23.0, endLng: -110.0, timing: "Feeds off Alaska (Summer, Jun-Sep), breeds in Baja California (Winter, Dec-Mar)." },
+            { name: "Southern Hemisphere", startLat: -50.0, startLng: 70.0, endLat: -10.0, endLng: 80.0, timing: "Feeds near Antarctica (Summer, Dec-Mar), breeds near Australia (Winter, Jun-Sep)." }
+        ]
+    },
+    {
+        species: "Osprey",
+        info: "Long-distance raptor migration between breeding and wintering grounds.",
+        routes: [
+            { name: "Eastern North America", startLat: 45.0, startLng: -70.0, endLat: -10.0, endLng: -60.0, timing: "Breeds in Canada/USA (Apr-Aug), winters in South America (Oct-Mar)." },
+            { name: "Western Europe-Africa", startLat: 55.0, startLng: 0.0, endLat: 0.0, endLng: 10.0, timing: "Breeds in UK/Scandinavia (Apr-Aug), winters in West Africa (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Loggerhead Sea Turtle",
+        info: "Migrates across oceans to nesting beaches.",
+        routes: [
+            { name: "Western Atlantic", startLat: 35.0, startLng: -75.0, endLat: 28.0, endLng: -80.0, timing: "Forages off Carolinas (Summer, Jun-Sep), nests in Florida (May-Aug)." },
+            { name: "Mediterranean", startLat: 38.0, startLng: 20.0, endLat: 35.0, endLng: 25.0, timing: "Forages in Mediterranean (Year-round), nests in Greece (Jun-Aug)." }
+        ]
+    },
+    {
+        species: "Barnacle Goose",
+        info: "Migrates between Arctic breeding grounds and temperate wintering areas.",
+        routes: [
+            { name: "Greenland-Ireland", startLat: 70.0, startLng: -25.0, endLat: 55.0, endLng: -8.0, timing: "Breeds in Greenland (May-Jul), winters in Ireland (Oct-Apr)." },
+            { name: "Svalbard-Scotland", startLat: 78.0, startLng: 15.0, endLat: 55.0, endLng: -4.0, timing: "Breeds in Svalbard (Jun-Jul), winters in Scotland (Oct-Apr)." }
+        ]
+    },
+    {
+        species: "Humpback Dolphin",
+        info: "Coastal migrations for feeding and breeding.",
+        routes: [
+            { name: "South Africa-Mozambique", startLat: -34.0, startLng: 18.0, endLat: -22.0, endLng: 35.0, timing: "Cape Town (Summer, Dec-Feb), Mozambique (Winter, Jun-Aug)." },
+            { name: "Indian Ocean-Arabian Gulf", startLat: 15.0, startLng: 55.0, endLat: 25.0, endLng: 55.0, timing: "Indian coast (Monsoon, Jun-Sep), Arabian Gulf (Winter, Dec-Mar)." }
+        ]
+    },
+    {
+        species: "European Honey Buzzard",
+        info: "Migrates between European forests and African savannas.",
+        routes: [
+            { name: "Western Route", startLat: 60.0, startLng: 10.0, endLat: -5.0, endLng: 10.0, timing: "Breeds in Scandinavia (May-Aug), winters in West Africa (Oct-Mar)." },
+            { name: "Eastern Route", startLat: 55.0, startLng: 30.0, endLat: -10.0, endLng: 35.0, timing: "Breeds in Russia (May-Aug), winters in East Africa (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Pacific Salmon (Sockeye)",
+        info: "Migrates from ocean to freshwater for spawning.",
+        routes: [
+            { name: "Fraser River", startLat: 50.0, startLng: -125.0, endLat: 49.0, endLng: -121.0, timing: "Ocean feeding (Year-round), spawns in Fraser River (Jul-Oct)." },
+            { name: "Bristol Bay", startLat: 57.0, startLng: -160.0, endLat: 58.0, endLng: -158.0, timing: "Ocean feeding (Year-round), spawns in Bristol Bay (Jun-Aug)." }
+        ]
+    },
+    {
+        species: "Lesser Flamingo",
+        info: "Migrates between soda lakes for feeding and breeding.",
+        routes: [
+            { name: "East Africa", startLat: -2.5, startLng: 36.0, endLat: -3.5, endLng: 35.0, timing: "Breeds in Lake Natron (Sep-Nov), feeds in Lake Nakuru (Year-round)." },
+            { name: "Southern Africa", startLat: -19.0, startLng: 22.0, endLat: -26.0, endLng: 16.0, timing: "Breeds in Etosha Pan (Jan-Mar), feeds in Namibian coast (Year-round)." }
+        ]
+    },
+    {
+        species: "Northern Fur Seal",
+        info: "Migrates between breeding colonies and foraging grounds.",
+        routes: [
+            { name: "Bering Sea", startLat: 57.0, startLng: -170.0, endLat: 50.0, endLng: -130.0, timing: "Breeds in Pribilof Islands (Jun-Aug), forages off California (Winter, Nov-Mar)." },
+            { name: "Kuril Islands", startLat: 47.0, startLng: 150.0, endLat: 35.0, endLng: 140.0, timing: "Breeds in Kuril Islands (Jun-Aug), forages near Japan (Winter, Nov-Mar)." }
+        ]
+    },
+    {
+        species: "Cuckoo (Common)",
+        info: "Long-distance migration between Europe and Africa.",
+        routes: [
+            { name: "Western Route", startLat: 50.0, startLng: 0.0, endLat: -5.0, endLng: 15.0, timing: "Breeds in UK (Apr-Jul), winters in Congo Basin (Sep-Mar)." },
+            { name: "Eastern Route", startLat: 55.0, startLng: 20.0, endLat: -10.0, endLng: 30.0, timing: "Breeds in Eastern Europe (Apr-Jul), winters in East Africa (Sep-Mar)." }
+        ]
+    },
+    {
+        species: "Greenland Shark",
+        info: "Seasonal migrations in Arctic waters for feeding.",
+        routes: [
+            { name: "Baffin Bay", startLat: 75.0, startLng: -70.0, endLat: 65.0, endLng: -50.0, timing: "Summers in Baffin Bay (Jun-Aug), winters in Davis Strait (Dec-Mar)." },
+            { name: "Norwegian Sea", startLat: 70.0, startLng: 5.0, endLat: 60.0, endLng: 0.0, timing: "Summers in Norwegian Sea (Jun-Sep), winters south (Dec-Mar)." }
+        ]
+    },
+    {
+        species: "Black-browed Albatross",
+        info: "Circumpolar migrations for feeding and breeding.",
+        routes: [
+            { name: "Falkland Islands", startLat: -51.0, startLng: -60.0, endLat: -35.0, endLng: 20.0, timing: "Breeds in Falklands (Sep-Jan), forages off South Africa (Feb-Aug)." },
+            { name: "South Georgia", startLat: -54.0, startLng: -36.0, endLat: -30.0, endLng: -10.0, timing: "Breeds in South Georgia (Oct-Feb), forages in South Atlantic (Mar-Sep)." }
+        ]
+    },
+    {
+        species: "White-bearded Wildebeest",
+        info: "Seasonal migrations following rainfall patterns.",
+        routes: [
+            { name: "Serengeti Western Corridor", startLat: -2.0, startLng: 34.0, endLat: -1.0, endLng: 35.0, timing: "Serengeti (Jan-Mar), Western Corridor (May-Jul)." },
+            { name: "Maasai Mara", startLat: -2.0, startLng: 34.0, endLat: -1.3, endLng: 35.5, timing: "Serengeti (Jan-Mar), Maasai Mara (Jul-Oct)." }
+        ]
+    },
+    {
+        species: "Short-tailed Shearwater",
+        info: "Trans-Pacific migration for breeding and feeding.",
+        routes: [
+            { name: "Tasmania-Alaska", startLat: -43.0, startLng: 147.0, endLat: 60.0, endLng: -170.0, timing: "Breeds in Tasmania (Nov-Mar), feeds in Bering Sea (May-Sep)." },
+            { name: "New Zealand-Alaska", startLat: -45.0, startLng: 170.0, endLat: 60.0, endLng: -170.0, timing: "Breeds in New Zealand (Nov-Mar), feeds in Bering Sea (May-Sep)." }
+        ]
+    },
+    {
+        species: "Red-billed Quelea",
+        info: "Nomadic migrations for food availability.",
+        routes: [
+            { name: "East Africa", startLat: -3.0, startLng: 35.0, endLat: 0.0, endLng: 37.0, timing: "Tanzania (Dry season, Jun-Sep), Kenya (Wet season, Nov-Apr)." },
+            { name: "Southern Africa", startLat: -20.0, startLng: 25.0, endLat: -15.0, endLng: 30.0, timing: "Botswana (Dry season, May-Aug), Zimbabwe (Wet season, Nov-Mar)." }
+        ]
+    },
+    {
+        species: "Beluga Whale",
+        info: "Migrates within Arctic for feeding and calving.",
+        routes: [
+            { name: "Beaufort Sea", startLat: 70.0, startLng: -140.0, endLat: 65.0, endLng: -125.0, timing: "Summers in Beaufort Sea (Jun-Aug), winters in Bering Sea (Dec-Mar)." },
+            { name: "Hudson Bay", startLat: 60.0, startLng: -90.0, endLat: 55.0, endLng: -80.0, timing: "Summers in Hudson Bay (Jun-Aug), winters in Labrador Sea (Dec-Mar)." }
+        ]
+    },
+    {
+        species: "Pied Avocet",
+        info: "Migrates between breeding and wintering wetlands.",
+        routes: [
+            { name: "Europe-Africa", startLat: 52.0, startLng: 4.0, endLat: 15.0, endLng: -17.0, timing: "Breeds in Netherlands (Apr-Jul), winters in West Africa (Oct-Mar)." },
+            { name: "Central Asia-Africa", startLat: 50.0, startLng: 60.0, endLat: 10.0, endLng: 40.0, timing: "Breeds in Kazakhstan (Apr-Jul), winters in Red Sea (Oct-Mar)." }
+        ]
+    },
+    {
+        species: "Atlantic Puffin",
+        info: "Migrates between breeding colonies and wintering at sea.",
+        routes: [
+            { name: "North Atlantic-Iceland", startLat: 65.0, startLng: -20.0, endLat: 40.0, endLng: -30.0, timing: "Breeds in Iceland (May-Aug), winters at sea (Sep-Apr)." },
+            { name: "North Atlantic-Norway", startLat: 70.0, startLng: 20.0, endLat: 45.0, endLng: -10.0, timing: "Breeds in Norway (May-Aug), winters at sea (Sep-Apr)." }
+        ]
+    },
+    {
+        species: "African Penguin",
+        info: "Coastal migrations for feeding.",
+        routes: [
+            { name: "South Africa-Namibia", startLat: -34.0, startLng: 18.0, endLat: -22.0, endLng: 14.0, timing: "Breeds in Cape Town (Year-round), forages in Namibia (Dec-Mar)." },
+            { name: "Benguela Current", startLat: -33.0, startLng: 17.0, endLat: -28.0, endLng: 16.0, timing: "Breeds in South Africa (Year-round), forages in Benguela Current (Jun-Sep)." }
+        ]
+    },
+    {
+        species: "Eurasian Spoonbill",
+        info: "Migrates between European wetlands and African wintering grounds.",
+        routes: [
+            { name: "Western Europe-Africa", startLat: 52.0, startLng: 4.0, endLat: 15.0, endLng: -17.0, timing: "Breeds in Netherlands (Apr-Aug), winters in Senegal (Oct-Mar)." },
+            { name: "Eastern Europe-Africa", startLat: 45.0, startLng: 20.0, endLat: 0.0, endLng: 30.0, timing: "Breeds in Danube Delta (Apr-Aug), winters in East Africa (Oct-Mar)." }
+        ]
+    }
+
+          
+        ];
+
+        async function initializeGlobe() {
+            if (typeof Globe === 'undefined') {
+                setTimeout(initializeGlobe, 100);
+                return;
+            }
+            
+            statusMessage.textContent = 'Loading map...';
+
+            // Fetch polygon data for the map
+            const countries = await (await fetch(GEO_JSON_URL)).json();
+            
+            statusMessage.textContent = '';
+            
+            globe = Globe()(document.getElementById('globeViz'))
+                // The two lines that loaded external images have been removed.
+                .showAtmosphere(true)
+                .atmosphereColor('#3a228a')
+                
+                // Polygon layer for continents/borders
+                .polygonsData(countries.features)
+                .polygonCapColor(() => 'rgba(100, 100, 100, 0.7)')
+                .polygonSideColor(() => 'rgba(0, 0, 0, 0.1)')
+                .polygonStrokeColor(() => '#333')
+                
+                // Arc layer for migrations
+                .arcsData([])
+                .arcLabel(d => d.name)
+                .arcStartLat(d => d.startLat)
+                .arcStartLng(d => d.startLng)
+                .arcEndLat(d => d.endLat)
+                .arcEndLng(d => d.endLng)
+                .arcColor(() => 'rgba(255, 255, 0, 0.7)') // Bright Yellow
+                .arcDashLength(0.4)
+                .arcDashGap(0.2)
+                .arcDashAnimateTime(2000)
+                
+                // Point layer for start/end
+                .pointsData([])
+                .pointLat(d => d.lat)
+                .pointLng(d => d.lng)
+                .pointColor(d => d.color)
+                .pointRadius(0.5)
+                .pointAltitude(0.01);
+                
+            loadMigrationData();
+        }
+
+        function loadMigrationData() {
+            migrationData.sort((a, b) => a.species.localeCompare(b.species));
+            renderDropdown(migrationData);
+        }
+        
+        function renderDropdown(migrations) {
+            speciesSelect.innerHTML = '<option value="">-- Select a Species --</option>';
+            migrations.forEach(m => {
+                const option = document.createElement('option');
+                option.value = m.species;
+                option.textContent = m.species;
+                speciesSelect.appendChild(option);
+            });
+        }
+
+        function selectSpecies(speciesName) {
+            if (!speciesName) {
+                infoPanel.style.display = 'none';
+                routeNav.style.display = 'none';
+                globe.arcsData([]).pointsData([]);
+                selectedSpeciesData = null;
+                return;
+            }
+            
+            selectedSpeciesData = migrationData.find(m => m.species === speciesName);
+
+            if (selectedSpeciesData) {
+                currentRouteIndex = 0;
+                displayCurrentRoute();
+
+                if (selectedSpeciesData.routes.length > 1) {
+                    routeNav.style.display = 'flex';
+                } else {
+                    routeNav.style.display = 'none';
+                }
+            }
+        }
+
+        function displayCurrentRoute() {
+            if (!selectedSpeciesData) return;
+            
+            const route = selectedSpeciesData.routes[currentRouteIndex];
+            
+            infoPanel.style.display = 'block';
+            infoPanel.innerHTML = `
+                <h2>${selectedSpeciesData.species}</h2>
+                <p class="species-info">${selectedSpeciesData.info}</p>
+                <div class="route-title">${route.name}</div>
+                <p><strong>Timing:</strong> ${route.timing || 'N/A'}</p>
+                <p><strong>From:</strong> Lat: ${route.startLat.toFixed(2)}, Lng: ${route.startLng.toFixed(2)}</p>
+                <p><strong>To:</strong> Lat: ${route.endLat.toFixed(2)}, Lng: ${route.endLng.toFixed(2)}</p>
+            `;
+
+            globe.arcsData([route]).pointsData([
+                { lat: route.startLat, lng: route.startLng, color: '#32CD32' }, // LimeGreen
+                { lat: route.endLat, lng: route.endLng, color: '#FF4500' }     // OrangeRed
+            ]);
+
+            if (selectedSpeciesData.routes.length > 1) {
+                routeNavInfo.textContent = `${route.name} (${currentRouteIndex + 1}/${selectedSpeciesData.routes.length})`;
+            }
+
+            const avgLat = (route.startLat + route.endLat) / 2;
+            const avgLng = (route.startLng + route.endLng) / 2;
+            globe.pointOfView({ lat: avgLat, lng: avgLng, altitude: 2 }, 1500);
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            speciesSelect.addEventListener('change', (e) => selectSpecies(e.target.value));
+            
+            prevRouteBtn.addEventListener('click', () => {
+                if (!selectedSpeciesData) return;
+                currentRouteIndex = (currentRouteIndex - 1 + selectedSpeciesData.routes.length) % selectedSpeciesData.routes.length;
+                displayCurrentRoute();
+            });
+
+            nextRouteBtn.addEventListener('click', () => {
+                if (!selectedSpeciesData) return;
+                currentRouteIndex = (currentRouteIndex + 1) % selectedSpeciesData.routes.length;
+                displayCurrentRoute();
+            });
+
+            initializeGlobe();
+        });
+    </script>
+</body>
+</html>
